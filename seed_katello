@@ -1,0 +1,165 @@
+#!/usr/bin/env ruby
+#
+# Sets up Katello with an organization full of synced Repositories, Lifecycle Environments, and Content Views in varying stages of promotion
+#
+# Requirements: Ruby 2.4+ and gems installed with "bundle install"
+#
+# Create a new organization by passing in arguments or pass name of existing org as first argument
+#
+# For example, here a random org is created:
+# ./seed_katello 
+#
+# And here the existing "Foo" organization will be used
+# ./seed_katello Foo
+#
+
+require 'faker'
+require 'net/http'
+
+
+#### Configuration ####
+
+# Hammer command on the system
+hammer="BUNDLE_GEMFILE=~/hammer-cli-foreman/Gemfile bundle exec hammer"
+
+# Environments to create
+ENVIRONMENTS=["Dev", "Staging", "QA", "Production"]
+
+# Amount of repositories to create
+REPO_AMOUNT=10
+
+# Repo urls will be cycled through and re-used if there are less urls than repositories
+REPO_URLS=[
+  "https://inecas.fedorapeople.org/fakerepos/zoo3/",
+  "https://jlsherrill.fedorapeople.org/fake-repos/needed-errata/",
+  "https://partha.fedorapeople.org/test-repos/pteradactly-with-dino-errata/",
+  "https://partha.fedorapeople.org/test-repos/subman-repos/29/"
+#  "https://dl.fedoraproject.org/pub/archive/fedora/linux/releases/30/Modular/x86_64/os/",
+#  "https://dl.fedoraproject.org/pub/archive/fedora/linux/releases/30/Workstation/x86_64/os/",
+]
+
+# Amount of Content Views to create
+CONTENT_VIEW_COUNT=20
+
+# Upper limit of the amount of repos to be added to a CV. A number will be randomly chosen for each 
+# repo from the range of 0 to this value (including 0 and the value).
+CV_REPO_UPPER_LIMIT=5
+
+# Upper limit of the amount of times a CV is published.
+CV_PUBLISH_UPPER_LIMIT=5
+
+# Amount actions to run concurrently, waiting to finish before starting the next batch.
+CONCURRENT_BATCH_MAX=5
+
+
+#### Setup ####
+
+## Helpers ##
+def run_cmd(command, failed_msg: "Something went wrong!", success_msg: "Command completed successfully", show_cmd: true)
+  puts command if show_cmd
+  result = `#{command}`
+  if $?.success?
+    puts success_msg 
+  else
+    puts result
+    fail failed_msg
+  end
+end
+
+## Randomness config ##
+Faker::Config.random = nil # Actually random
+#Faker::Config.random = Random.new(42) # Deterministicly random, will always be the same
+
+#### Script ####
+
+## Org creation ##
+org_name = ""
+
+if ARGV[0]
+  org_name = ARGV[0]
+else
+  org_name = Faker::Space.nasa_space_craft
+  puts "Creating organization #{org_name}"
+  run_cmd("#{hammer} organization create --name \"#{org_name}\"")
+end
+
+puts "Using Organization #{org_name}"
+
+## Environment creation ##
+puts "\nCreating Environments...\n"
+ENVIRONMENTS.each_with_index do |env, i|
+  prior = "Library"
+  prior = ENVIRONMENTS[i-1] if i > 0
+  description = Faker::Space.unique.distance_measurement
+  run_cmd("#{hammer} lifecycle-environment create --organization \"#{org_name}\" --name \"#{env}\" --description \"#{description}\" --prior \"#{prior}\"")
+end
+
+
+## Product Creation ##
+puts "\nCreating Products...\n"
+product_name =  Faker::Space.nebula
+product_description = Faker::Company.unique.bs
+
+run_cmd("#{hammer} product create --organization \"#{org_name}\" --name \"#{product_name}\" --description \"#{product_description}\"")
+
+
+## Repository Creation ## 
+puts "\nCreating Repositories...\n"
+repositories = []
+REPO_AMOUNT.times do |i|
+  repo = {
+    name: Faker::Space.unique.star_cluster,
+    url: REPO_URLS[i % REPO_URLS.length]
+  }
+  repositories << repo
+end
+
+repositories.each do |r|
+  args = "--name \"#{r[:name]}\" --product \"#{product_name}\" --url \"#{r[:url]}\" --content-type yum"
+  run_cmd("#{hammer} repository create --organization \"#{org_name}\" #{args}")
+end
+
+## Repository Syncing ##
+puts "\nSyncing Repositories...\n"
+
+# concurrently sync repos
+repositories.each_slice(CONCURRENT_BATCH_MAX).each do |batch|
+  repo_sync_threads = []
+  batch.each_with_index do |repo, i|
+    base_command = "repository synchronize --organization \"#{org_name}\""
+    args = "--name \"#{repo[:name]}\" --product \"#{product_name}\""
+
+    # Spawn a new thread for each repo
+    repo_sync_threads << Thread.new do
+      puts "\nStarting sync of #{repo[:name]}"
+      run_cmd("#{hammer} #{base_command} #{args}")
+      puts "\nSyncing #{repo[:name]} Complete\n"
+    end
+  end
+  repo_sync_threads.each { |t| t.join }
+end
+# wait for threads to finish
+
+## Content View Creation
+puts "\nCreating Content Views...\n"
+
+content_views = []
+CONTENT_VIEW_COUNT.times do |i|
+  content_views << Faker::Space.unique.meteorite
+end
+
+content_views.each do |cvname|
+  run_cmd("#{hammer} content-view create --organization \"#{org_name}\" --name \"#{cvname}\"")
+  # Add a random number of repos to the content view
+  repositories.sample(rand(0..CV_REPO_UPPER_LIMIT)).each do |repo|
+    args = "--name \"#{cvname}\" --product \"#{product_name}\" --repository \"#{repo[:name]}\""
+    run_cmd("#{hammer} content-view add-repository --organization \"#{org_name}\" #{args}")
+  end
+end
+
+content_views.each do |cvname|
+  rand(0..CV_PUBLISH_UPPER_LIMIT).times do |_t|
+    run_cmd("#{hammer} content-view publish --organization \"#{org_name}\" --name \"#{cvname}\"")
+  end
+end
+

@@ -1,0 +1,28 @@
+#!/usr/bin/env ruby
+# This will send concurrent hammer requests from a centos7-hammer-devel box. Update the commands below to alter the request
+
+require 'net/http'
+
+hammer="BUNDLE_GEMFILE=~/hammer-cli-foreman/Gemfile bundle exec hammer"
+
+# create base command
+base_command = "repository info "
+
+# create an array of flags
+command_flags = ['--id 1','--id 2','--id 3']
+
+# Create an array to keep track of threads.
+threads = []
+
+command_flags.each_with_index do |flag, i|
+  # spawn a new thread for each url
+  threads << Thread.new do
+    cmd = `#{hammer} #{base_command} #{flag}`
+    puts "\nRequest #{i+1} Complete: \n#{cmd}\n"
+  end
+end
+
+# wait for threads to finish before ending program.
+threads.each { |t| t.join }
+
+puts "All Done!"   
