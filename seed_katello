@@ -15,7 +15,7 @@
 
 require 'faker'
 require 'net/http'
-
+require 'csv'
 
 #### Configuration ####
 
@@ -26,7 +26,7 @@ hammer="BUNDLE_GEMFILE=~/hammer-cli-foreman/Gemfile bundle exec hammer"
 ENVIRONMENTS=["Dev", "Staging", "QA", "Production"]
 
 # Amount of repositories to create
-REPO_AMOUNT=10
+REPO_AMOUNT=5
 
 # Repo urls will be cycled through and re-used if there are less urls than repositories
 REPO_URLS=[
@@ -39,16 +39,16 @@ REPO_URLS=[
 ]
 
 # Amount of Content Views to create
-CONTENT_VIEW_COUNT=20
+CONTENT_VIEW_COUNT=5
 
 # Upper limit of the amount of repos to be added to a CV. A number will be randomly chosen for each 
 # repo from the range of 0 to this value (including 0 and the value).
-CV_REPO_UPPER_LIMIT=5
+CV_REPO_UPPER_LIMIT=3
 
 # Upper limit of the amount of times a CV is published.
-CV_PUBLISH_UPPER_LIMIT=5
+CV_PUBLISH_UPPER_LIMIT=3
 
-# Amount actions to run concurrently, waiting to finish before starting the next batch.
+# Amount of tasks to run concurrently, waiting to finish before starting the next batch.
 CONCURRENT_BATCH_MAX=5
 
 
@@ -64,6 +64,7 @@ def run_cmd(command, failed_msg: "Something went wrong!", success_msg: "Command 
     puts result
     fail failed_msg
   end
+  result
 end
 
 ## Randomness config ##
@@ -140,7 +141,7 @@ repositories.each_slice(CONCURRENT_BATCH_MAX).each do |batch|
 end
 # wait for threads to finish
 
-## Content View Creation
+## Content View Creation ##
 puts "\nCreating Content Views...\n"
 
 content_views = []
@@ -157,9 +158,41 @@ content_views.each do |cvname|
   end
 end
 
+## Content View Publishing ##
+puts "\nPublishing Content Views...\n"
+
+content_views.each_slice(CONCURRENT_BATCH_MAX).each do |batch|
+  content_view_publish_threads = [];
+  batch.each_with_index do |cvname|
+    content_view_publish_threads << Thread.new do
+      rand(0..CV_PUBLISH_UPPER_LIMIT).times do |_t|
+        run_cmd("#{hammer} content-view publish --organization \"#{org_name}\" --name \"#{cvname}\"")
+      end
+    end
+  end
+  content_view_publish_threads.each { |t| t.join }
+end
+
+## Content View Version Promoting ##
+puts "\nPromoting Content View Versions...\n"
+
+# Gathering version info
+cv_version_map = {}
 content_views.each do |cvname|
-  rand(0..CV_PUBLISH_UPPER_LIMIT).times do |_t|
-    run_cmd("#{hammer} content-view publish --organization \"#{org_name}\" --name \"#{cvname}\"")
+  cv_version_map[cvname] = []
+  versions_csv = run_cmd("#{hammer} --csv content-view version list --organization \"#{org_name}\" --content-view \"#{cvname}\"")
+  versions = CSV.parse(versions_csv, headers: true)
+  versions.each do |version|
+    cv_version_map[cvname] << { id: version["ID"], version: version["Version"] }
+  end
+end
+
+cv_version_map.each do |cvname, versions|
+  sorted_versions = versions.sort_by { |v| Gem::Version.new(v[:version]) }
+  versions.each do |cvv|
+    environment = ENVIRONMENTS[cvv[:version].to_i - 1]
+    args = "--organization \"#{org_name}\" --id \"#{cvv[:id]}\" --to-lifecycle-environment \"#{environment}\" --force"
+    run_cmd("#{hammer} content-view version promote #{args}")
   end
 end
 
