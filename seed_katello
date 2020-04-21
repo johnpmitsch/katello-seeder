@@ -1,8 +1,10 @@
 #!/usr/bin/env ruby
 #
-# Sets up Katello with an organization full of synced Repositories, Lifecycle Environments, and Content Views in varying stages of promotion
+# Sets up Katello with an organization full of synced Repositories, Lifecycle Environments, and Content Views in 
+# varying stages of promotion
 #
-# Requirements: Ruby 2.4+ and gems installed with "bundle install"
+# Requirements: Ruby 2.4+ and gems installed with "bundle install". Typically used on a centos7-hammer-devel box but can
+# be used with anywhere hammer is.
 #
 # Create a new organization by passing in arguments or pass name of existing org as first argument
 #
