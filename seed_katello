@@ -50,9 +50,6 @@ CV_REPO_UPPER_LIMIT=3
 # Upper limit of the amount of times a CV is published.
 CV_PUBLISH_UPPER_LIMIT=3
 
-# Amount of tasks to run concurrently, waiting to finish before starting the next batch.
-CONCURRENT_BATCH_MAX=5
-
 
 #### Setup ####
 
@@ -126,22 +123,14 @@ end
 puts "\nSyncing Repositories...\n"
 
 # concurrently sync repos
-repositories.each_slice(CONCURRENT_BATCH_MAX).each do |batch|
-  repo_sync_threads = []
-  batch.each_with_index do |repo, i|
-    base_command = "repository synchronize --organization \"#{org_name}\""
-    args = "--name \"#{repo[:name]}\" --product \"#{product_name}\""
+repositories.each_with_index do |repo, i|
+  base_command = "repository synchronize --organization \"#{org_name}\""
+  args = "--name \"#{repo[:name]}\" --product \"#{product_name}\""
 
-    # Spawn a new thread for each repo
-    repo_sync_threads << Thread.new do
-      puts "\nStarting sync of #{repo[:name]}"
-      run_cmd("#{hammer} #{base_command} #{args}")
-      puts "\nSyncing #{repo[:name]} Complete\n"
-    end
-  end
-  repo_sync_threads.each { |t| t.join }
+  puts "\nStarting sync of #{repo[:name]}"
+  run_cmd("#{hammer} #{base_command} #{args}")
+  puts "\nSyncing #{repo[:name]} Complete\n"
 end
-# wait for threads to finish
 
 ## Content View Creation ##
 puts "\nCreating Content Views...\n"
@@ -163,16 +152,10 @@ end
 ## Content View Publishing ##
 puts "\nPublishing Content Views...\n"
 
-content_views.each_slice(CONCURRENT_BATCH_MAX).each do |batch|
-  content_view_publish_threads = [];
-  batch.each_with_index do |cvname|
-    content_view_publish_threads << Thread.new do
-      rand(0..CV_PUBLISH_UPPER_LIMIT).times do |_t|
-        run_cmd("#{hammer} content-view publish --organization \"#{org_name}\" --name \"#{cvname}\"")
-      end
-    end
+content_views.each do |cvname|
+  rand(0..CV_PUBLISH_UPPER_LIMIT).times do |_t|
+    run_cmd("#{hammer} content-view publish --organization \"#{org_name}\" --name \"#{cvname}\"")
   end
-  content_view_publish_threads.each { |t| t.join }
 end
 
 ## Content View Version Promoting ##
